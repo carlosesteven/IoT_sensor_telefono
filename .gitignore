@@ -1,0 +1,50 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Entorno virtual ---
+venv/
+ENV/
+env/
+.venv/
+.env
+*.env
+
+# --- Archivos de configuración/secretos ---
+*.ini
+*.cfg
+*.toml
+*.yaml
+*.yml
+*.secret
+instance/
+
+# --- Logs / cache ---
+*.log
+*.pot
+*.mo
+*.db
+*.sqlite3
+*.sqlite
+
+# --- Distribución / compilados ---
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# --- Testing ---
+.coverage
+.tox/
+.nox/
+.pytest_cache/
+
+# --- IDEs ---
+.vscode/
+.idea/
+*.iml
+
+# --- Otros ---
+.DS_Store
+Thumbs.db
