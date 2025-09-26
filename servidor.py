@@ -134,7 +134,7 @@ INDEX_HTML = """
 <body>
   <h1>Sensor Monitor</h1>
   <div class="muted">Escuchando UDP en <code>{{udp_ip}}</code>:<code>{{udp_port}}</code>. Stream SSE activo.</div>
-  <div class="muted">Filtrado: <code>{{filter}}</code></div>
+  <div class="muted">Filtros: <code>{{filter}}</code></div>
 
   <table>
     <thead>
@@ -145,12 +145,22 @@ INDEX_HTML = """
         <th>Valor</th>
       </tr>
     </thead>
-    <tbody id="tbody"></tbody>
-  </table>
+    <tbody id="tbody">
+{% for r in ultimos %}
+  <tr>
+    <td>{{ loop.index }}</td>
+    <td>{{ r.timestamp_iso }}</td>
+    <td>{{ r.sensor }}</td>
+    <td>{{ "%.6f"|format(r.valor) }}</td>
+  </tr>
+{% endfor %}
+</tbody>
+</table>
 
 <script>
 const tbody = document.getElementById('tbody');
-let total = 0;
+// que el contador arranque en lo que ya se pintó (máx 20)
+let total = tbody.rows.length;
 const es = new EventSource('/stream');
 
 function fmt(n){ return Number(n).toFixed(6); }
@@ -171,8 +181,11 @@ es.onmessage = (ev) => {
       frag.appendChild(tr);
     }
     tbody.appendChild(frag);
-    // autoscroll
-    window.scrollTo(0, document.body.scrollHeight);
+
+    // Mantener SOLO las últimas 20 filas visibles
+    while (tbody.rows.length > 20) {
+      tbody.deleteRow(0); // elimina la más vieja
+    }
   } catch (e) {
     console.error('parse error', e);
   }
@@ -184,8 +197,15 @@ es.onmessage = (ev) => {
 
 @app.route("/")
 def index():
-    filt = ",".join(sorted(SENSORS_TO_COLLECT)) if SENSORS_TO_COLLECT else "todos"
-    return render_template_string(INDEX_HTML, udp_ip=UDP_IP, udp_port=UDP_PORT, filter=filt)
+    filt = ",".join(sorted(SENSORS_TO_COLLECT)) if SENSORS_TO_COLLECT else "NINGUNO"
+    ultimos = list(rows)[-20:]  # <<< SOLO LOS ÚLTIMOS 20
+    return render_template_string(
+        INDEX_HTML,
+        udp_ip=UDP_IP,
+        udp_port=UDP_PORT,
+        filter=filt,
+        ultimos=ultimos
+    )
 
 # ---------- main ----------
 if __name__ == "__main__":
