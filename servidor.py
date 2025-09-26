@@ -3,20 +3,90 @@ from datetime import datetime
 from collections import deque
 from flask import Flask, Response, jsonify, render_template_string
 
+### >>> NEW: deps para el modelo
+import joblib, numpy as np, json as _json
+
 # ========= CONFIG =========
 UDP_IP = "10.147.20.241"   # IP de tu PC (donde corre Flask)
 UDP_PORT = 8080
 SENSORS_TO_COLLECT = None  # {"gyro","accel","gps"} para filtrar, o None para todos
 MAX_ROWS_MEMORY = 5000     # filas que mantenemos en memoria para mostrar
 STREAM_INTERVAL_SEC = 0.2  # frecuencia de actualización del stream SSE
-HTTP_HOST = "0.0.0.0"      # cámbialo a "127.0.0.1" si solo verás local
+HTTP_HOST = "0.0.0.0"
 HTTP_PORT = 5050
-# =========================
+
+### >>> NEW: modelo entrenado (86%)
+MODEL_PATH = "entreno/har_mlp.joblib"
+LABELS_JSON = "entreno/har_labels.json"
+WINDOW = 128  # tamaño de ventana del UCI HAR
 
 app = Flask(__name__)
 rows = deque(maxlen=MAX_ROWS_MEMORY)   # cada fila: dict(timestamp_iso,t_rel_s,sensor,valor)
 start_time = None
 _start_lock = threading.Lock()
+
+### >>> NEW: cargar modelo y labels + buffers por eje
+MODEL = joblib.load(MODEL_PATH)
+with open(LABELS_JSON) as f:
+    LABMAP = {int(k): v for k, v in _json.load(f).items()}
+
+BUFF = {
+    "acc_x": deque(maxlen=WINDOW), "acc_y": deque(maxlen=WINDOW), "acc_z": deque(maxlen=WINDOW),
+    "gyro_x": deque(maxlen=WINDOW), "gyro_y": deque(maxlen=WINDOW), "gyro_z": deque(maxlen=WINDOW),
+}
+
+# --- NUEVO: último valor por eje + temporizador de muestreo "cohesionado por tiempo"
+LAST = {
+    "acc_x": None, "acc_y": None, "acc_z": None,
+    "gyro_x": None, "gyro_y": None, "gyro_z": None,
+}
+SAMPLE_HZ = 25                 # frecuencia a la que quieres tomar muestras para la ventana
+SAMPLE_PERIOD = 1.0 / SAMPLE_HZ
+_last_sample_t = 0.0
+_last_pred_len = 0             # para no repetir predicción en el mismo índice de ventana
+
+def _feat_block(arr: np.ndarray):
+    """Devuelve [mean, std, min, max, rms, mad] para un array 1D."""
+    arr = np.asarray(arr, dtype=float)
+    mean = arr.mean()
+    std  = arr.std()
+    vmin = arr.min()
+    vmax = arr.max()
+    rms  = np.sqrt((arr**2).mean())
+    mad  = np.mean(np.abs(arr - mean))
+    return np.array([mean, std, vmin, vmax, rms, mad], dtype=float)
+
+def _make_feature_vector_from_buffers():
+    """Concatena features de 6 ejes + magnitudes => (1, 60) o None si no hay 128 muestras aún."""
+    if min(len(BUFF[k]) for k in BUFF.keys()) < WINDOW:
+        return None
+    ax = np.array(BUFF["acc_x"]); ay = np.array(BUFF["acc_y"]); az = np.array(BUFF["acc_z"])
+    gx = np.array(BUFF["gyro_x"]); gy = np.array(BUFF["gyro_y"]); gz = np.array(BUFF["gyro_z"])
+    acc_mag  = np.sqrt(ax**2 + ay**2 + az**2)
+    gyro_mag = np.sqrt(gx**2 + gy**2 + gz**2)
+    feats = np.concatenate([
+        _feat_block(ax), _feat_block(ay), _feat_block(az),
+        _feat_block(gx), _feat_block(gy), _feat_block(gz),
+        _feat_block(acc_mag), _feat_block(gyro_mag),
+    ])
+    return feats.reshape(1, -1)
+
+def _try_predict_and_push_row(t_iso, t_rel):
+    """Si hay ventana completa, predice y agrega una fila 'pred:<LABEL>' con la confianza."""
+    X = _make_feature_vector_from_buffers()
+    if X is None:
+        return
+    proba = MODEL.predict_proba(X)[0]
+    label_id = int(MODEL.predict(X)[0])
+    label = LABMAP.get(label_id, str(label_id))
+    conf = float(np.max(proba))
+    # Empuja una fila "virtual" con el resultado
+    rows.append({
+        "timestamp_iso": t_iso,
+        "t_rel_s": t_rel,
+        "sensor": f"pred:{label}",  # se mostrará 'pred:STANDING' por ejemplo
+        "valor": conf               # confianza 0..1
+    })
 
 # ---------- Parser ----------
 def iter_pairs_from_msg(msg: dict):
@@ -77,6 +147,7 @@ def udp_loop():
         t_rel = now - start_time
         t_iso = datetime.utcnow().isoformat()
 
+        # --- ACTUALIZA "LAST" con el último valor visto por eje ---
         for key, val in pairs:
             sensor_name = key.split(":", 1)[0]
             if SENSORS_TO_COLLECT and sensor_name not in SENSORS_TO_COLLECT:
@@ -86,12 +157,42 @@ def udp_loop():
             except (TypeError, ValueError):
                 continue
 
+            # Seguimos mostrando cada lectura como fila normal
             rows.append({
                 "timestamp_iso": t_iso,
                 "t_rel_s": t_rel,
-                "sensor": key,  # p.ej. 'gyro:x', 'gps:latitude'
+                "sensor": key,  # p.ej. 'gyro:x', 'accel:z'
                 "valor": valor
             })
+
+            # Actualiza último valor visto por eje
+            if key == "accel:x": LAST["acc_x"] = valor
+            elif key == "accel:y": LAST["acc_y"] = valor
+            elif key == "accel:z": LAST["acc_z"] = valor
+            elif key == "gyro:x":  LAST["gyro_x"] = valor
+            elif key == "gyro:y":  LAST["gyro_y"] = valor
+            elif key == "gyro:z":  LAST["gyro_z"] = valor
+
+        # --- Si ya tenemos los 6 ejes y pasó el periodo, "tomamos" UNA muestra a la ventana ---
+        ready = all(v is not None for v in LAST.values())
+        now2 = time.time()
+        global _last_sample_t, _last_pred_len
+
+        if ready and (now2 - _last_sample_t) >= SAMPLE_PERIOD:
+            # Empuja una muestra (los últimos valores) a los buffers
+            BUFF["acc_x"].append(LAST["acc_x"])
+            BUFF["acc_y"].append(LAST["acc_y"])
+            BUFF["acc_z"].append(LAST["acc_z"])
+            BUFF["gyro_x"].append(LAST["gyro_x"])
+            BUFF["gyro_y"].append(LAST["gyro_y"])
+            BUFF["gyro_z"].append(LAST["gyro_z"])
+            _last_sample_t = now2
+
+            # Si ya hay 128 por eje y avanzó el índice, predice y agrega fila 'pred:<LABEL>'
+            min_len = min(len(BUFF[k]) for k in BUFF.keys())
+            if min_len >= WINDOW and min_len != _last_pred_len:
+                _try_predict_and_push_row(t_iso, t_rel)
+                _last_pred_len = min_len
 
 # ---------- SSE stream ----------
 @app.route("/stream")
@@ -99,7 +200,6 @@ def stream():
     def gen():
         last_len = 0
         while True:
-            # si hay nuevas filas, envíalas (en bloque) como una lista JSON
             if len(rows) != last_len:
                 payload = list(rows)[last_len:]  # solo lo nuevo
                 last_len = len(rows)
@@ -135,6 +235,7 @@ INDEX_HTML = """
   <h1>Sensor Monitor</h1>
   <div class="muted">Escuchando UDP en <code>{{udp_ip}}</code>:<code>{{udp_port}}</code>. Stream SSE activo.</div>
   <div class="muted">Filtros: <code>{{filter}}</code></div>
+  <div class="muted">Actividad: <b id="act">—</b> <span id="conf"></span></div>
 
   <table>
     <thead>
@@ -159,24 +260,38 @@ INDEX_HTML = """
 
 <script>
 const tbody = document.getElementById('tbody');
-// que el contador arranque en lo que ya se pintó (máx 20)
 let total = tbody.rows.length;
 const es = new EventSource('/stream');
+
+const act = document.getElementById('act');
+const conf = document.getElementById('conf');
 
 function fmt(n){ return Number(n).toFixed(6); }
 
 es.onmessage = (ev) => {
   try {
-    const arr = JSON.parse(ev.data);   // bloque de filas nuevas
+    const arr = JSON.parse(ev.data);
     const frag = document.createDocumentFragment();
     for (const row of arr) {
+      // Si es una predicción, actualiza encabezado
+      if (typeof row.sensor === 'string' && row.sensor.startsWith('pred:')) {
+        const label = row.sensor.slice(5); // quita 'pred:'
+        act.textContent = label;
+        if (typeof row.valor === 'number') {
+          conf.textContent = `(${(row.valor*100).toFixed(1)}%)`;
+        } else {
+          conf.textContent = '';
+        }
+      }
+
+      // Agregar fila a la tabla
       total++;
       const tr = document.createElement('tr');
       tr.innerHTML = `
         <td>${total}</td>
         <td>${row.timestamp_iso}</td>
         <td>${row.sensor}</td>
-        <td>${fmt(row.valor)}</td>
+        <td>${typeof row.valor === 'number' ? fmt(row.valor) : row.valor}</td>
       `;
       frag.appendChild(tr);
     }
@@ -184,7 +299,7 @@ es.onmessage = (ev) => {
 
     // Mantener SOLO las últimas 20 filas visibles
     while (tbody.rows.length > 20) {
-      tbody.deleteRow(0); // elimina la más vieja
+      tbody.deleteRow(0);
     }
   } catch (e) {
     console.error('parse error', e);
@@ -198,7 +313,7 @@ es.onmessage = (ev) => {
 @app.route("/")
 def index():
     filt = ",".join(sorted(SENSORS_TO_COLLECT)) if SENSORS_TO_COLLECT else "NINGUNO"
-    ultimos = list(rows)[-20:]  # <<< SOLO LOS ÚLTIMOS 20
+    ultimos = list(rows)[-20:]
     return render_template_string(
         INDEX_HTML,
         udp_ip=UDP_IP,
