@@ -11,7 +11,7 @@ UDP_IP = "10.147.20.241"   # IP de tu PC (donde corre Flask)
 UDP_PORT = 8080
 SENSORS_TO_COLLECT = None  # {"gyro","accel","gps"} para filtrar, o None para todos
 MAX_ROWS_MEMORY = 5000     # filas que mantenemos en memoria para mostrar
-STREAM_INTERVAL_SEC = 0.2  # frecuencia de actualización del stream SSE
+STREAM_INTERVAL_SEC = 0.1  # frecuencia de actualización del stream SSE
 HTTP_HOST = "0.0.0.0"
 HTTP_PORT = 5050
 
@@ -22,6 +22,7 @@ WINDOW = 128  # tamaño de ventana del UCI HAR
 
 app = Flask(__name__)
 rows = deque(maxlen=MAX_ROWS_MEMORY)   # cada fila: dict(timestamp_iso,t_rel_s,sensor,valor)
+NEXT_SEQ = 0  # <<< NEW: contador monotónico de filas
 start_time = None
 _start_lock = threading.Lock()
 
@@ -40,10 +41,15 @@ LAST = {
     "acc_x": None, "acc_y": None, "acc_z": None,
     "gyro_x": None, "gyro_y": None, "gyro_z": None,
 }
-SAMPLE_HZ = 25                 # frecuencia a la que quieres tomar muestras para la ventana
+SAMPLE_HZ = 60                 # frecuencia a la que quieres tomar muestras para la ventana
 SAMPLE_PERIOD = 1.0 / SAMPLE_HZ
 _last_sample_t = 0.0
 _last_pred_len = 0             # para no repetir predicción en el mismo índice de ventana
+
+# --- NEW: frecuencia de predicción sobre la ventana rodante
+PRED_EVERY = 10          # predecir cada 10 muestras nuevas (ajústalo a gusto)
+SAMPLE_IDX = 0           # índice global de muestras tomadas
+LAST_PRED_IDX = -1       # última muestra en la que se predijo
 
 def _feat_block(arr: np.ndarray):
     """Devuelve [mean, std, min, max, rms, mad] para un array 1D."""
@@ -81,12 +87,16 @@ def _try_predict_and_push_row(t_iso, t_rel):
     label = LABMAP.get(label_id, str(label_id))
     conf = float(np.max(proba))
     # Empuja una fila "virtual" con el resultado
-    rows.append({
+    global NEXT_SEQ
+    row = {
         "timestamp_iso": t_iso,
         "t_rel_s": t_rel,
-        "sensor": f"pred:{label}",  # se mostrará 'pred:STANDING' por ejemplo
-        "valor": conf               # confianza 0..1
-    })
+        "sensor": f"pred:{label}",
+        "valor": conf,
+        "seq": NEXT_SEQ  # <<< NEW
+    }
+    NEXT_SEQ += 1
+    rows.append(row)
 
 # ---------- Parser ----------
 def iter_pairs_from_msg(msg: dict):
@@ -119,8 +129,8 @@ def iter_pairs_from_msg(msg: dict):
                     yield f"{base}:{axis}", sd[axis]
 
 # ---------- UDP listener en hilo ----------
-def udp_loop():
-    global start_time
+def udp_loop():    
+    global start_time, NEXT_SEQ, _last_sample_t, _last_pred_len, SAMPLE_IDX, LAST_PRED_IDX
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((UDP_IP, UDP_PORT))
     print(f"UDP escuchando en {UDP_IP}:{UDP_PORT}")
@@ -145,7 +155,7 @@ def udp_loop():
                     print("⏱️ Captura iniciada")
 
         t_rel = now - start_time
-        t_iso = datetime.utcnow().isoformat()
+        t_iso = datetime.utcnow().isoformat(timespec="milliseconds")
 
         # --- ACTUALIZA "LAST" con el último valor visto por eje ---
         for key, val in pairs:
@@ -158,12 +168,16 @@ def udp_loop():
                 continue
 
             # Seguimos mostrando cada lectura como fila normal
-            rows.append({
+            global NEXT_SEQ
+            row = {
                 "timestamp_iso": t_iso,
                 "t_rel_s": t_rel,
-                "sensor": key,  # p.ej. 'gyro:x', 'accel:z'
-                "valor": valor
-            })
+                "sensor": key,
+                "valor": valor,
+                "seq": NEXT_SEQ  # <<< NEW
+            }
+            NEXT_SEQ += 1
+            rows.append(row)
 
             # Actualiza último valor visto por eje
             if key == "accel:x": LAST["acc_x"] = valor
@@ -188,24 +202,40 @@ def udp_loop():
             BUFF["gyro_z"].append(LAST["gyro_z"])
             _last_sample_t = now2
 
+            SAMPLE_IDX += 1  # <<< NEW
+
             # Si ya hay 128 por eje y avanzó el índice, predice y agrega fila 'pred:<LABEL>'
             min_len = min(len(BUFF[k]) for k in BUFF.keys())
-            if min_len >= WINDOW and min_len != _last_pred_len:
+            if min_len >= WINDOW and (SAMPLE_IDX - LAST_PRED_IDX) >= PRED_EVERY:
                 _try_predict_and_push_row(t_iso, t_rel)
-                _last_pred_len = min_len
+                LAST_PRED_IDX = SAMPLE_IDX  # <<< NEW
 
 # ---------- SSE stream ----------
 @app.route("/stream")
 def stream():
     def gen():
-        last_len = 0
+        last_seq = -1  # <<< NEW: último seq enviado a este cliente
         while True:
-            if len(rows) != last_len:
-                payload = list(rows)[last_len:]  # solo lo nuevo
-                last_len = len(rows)
-                yield f"data: {json.dumps(payload)}\n\n"
+            snapshot = list(rows)  # toma foto de las filas actuales
+            # filtra solo lo nuevo desde el último seq enviado
+            new_rows = [r for r in snapshot if r.get("seq", -1) > last_seq]
+            if new_rows:
+                last_seq = new_rows[-1]["seq"]
+                yield f"data: {json.dumps(new_rows)}\n\n"
             time.sleep(STREAM_INTERVAL_SEC)
     return Response(gen(), mimetype="text/event-stream")
+
+@app.route("/reset", methods=["GET"])
+def reset():
+    global NEXT_SEQ, start_time, _last_sample_t, _last_pred_len
+    rows.clear()
+    for dq in BUFF.values(): dq.clear()
+    for k in LAST: LAST[k] = None
+    start_time = None
+    _last_sample_t = 0.0
+    _last_pred_len = 0
+    NEXT_SEQ = 0
+    return jsonify(ok=True)
 
 # ---------- API simple (útil para debug) ----------
 @app.route("/api/latest")
