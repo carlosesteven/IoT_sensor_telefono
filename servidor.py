@@ -16,8 +16,8 @@ HTTP_HOST = "0.0.0.0"
 HTTP_PORT = 5050
 
 ### >>> NEW: modelo entrenado (86%)
-MODEL_PATH = "entreno/har_mlp.joblib"
-LABELS_JSON = "entreno/har_labels.json"
+MODEL_PATH = "entrenamiento/har_mlp.joblib"
+LABELS_JSON = "entrenamiento/har_labels.json"
 WINDOW = 128  # tamaño de ventana del UCI HAR
 
 app = Flask(__name__)

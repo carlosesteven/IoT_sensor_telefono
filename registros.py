@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
-import socket, json, time, os, csv
-from collections import deque
+import socket, json, time, os, csv, sys, threading, re
 from datetime import datetime
-import threading
 
 # ============== CONFIG =================
 UDP_IP   = "0.0.0.0"     # escucha en todas las interfaces
 UDP_PORT = 8080
 SAMPLE_HZ = 60           # igual a la tasa de ZIG SIM (p.ej. 60)
-CAPTURE_SECONDS = 1.0    # EXACTO 1 segundo de captura
+CAPTURE_SECONDS = 1.0    # EXACTO 1 segundo por archivo
 OUT_DIR = "recordings"   # carpeta de salida
 # =======================================
 
+# Últimos valores recibidos por eje
 LAST = {"acc_x": None, "acc_y": None, "acc_z": None,
         "gyr_x": None, "gyr_y": None, "gyr_z": None}
+
 STOP = False
 _ready_evt = threading.Event()
 _lock = threading.Lock()
 
+# Tag para rotular la captura (L=lento, R=rápido). Cambiable desde teclado.
+CURRENT_TAG = "L"
+
 def iter_pairs_from_msg(msg: dict):
+    """Normaliza diferentes formatos (plano o 'sensordata') en claves acc_* / gyr_*."""
     # 1) formato plano "sensor:axis"
     for k, v in list(msg.items()):
         if isinstance(k, str) and ":" in k:
@@ -81,24 +85,29 @@ def udp_listener():
                 _ready_evt.set()  # ya tenemos los 6 ejes
     sock.close()
 
-def capture_one_second():
-    """Captura EXACTO 1 segundo a SAMPLE_HZ, empezando cuando hay datos listos."""
-    # Espera a que lleguen los primeros datos completos
-    print("[CAP] Esperando primeros datos (6 ejes)…")
-    _ready_evt.wait()  # bloquea hasta tener los 6 ejes al menos una vez
-    print("[CAP] Datos detectados. Iniciando captura de 1 segundo…")
-
-    # Prepara archivo
+def next_index_from_disk():
+    """Lee OUT_DIR y encuentra el próximo índice vN a usar."""
     os.makedirs(OUT_DIR, exist_ok=True)
-    ts_name = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-    csv_path = os.path.join(OUT_DIR, f"capture_{ts_name}.csv")
+    pat = re.compile(r"^v(\d+)(?:_[LR])?\.csv$")
+    mx = 0
+    for name in os.listdir(OUT_DIR):
+        m = pat.match(name)
+        if m:
+            try:
+                mx = max(mx, int(m.group(1)))
+            except ValueError:
+                pass
+    return mx + 1
 
+def capture_block(idx: int, tag: str):
+    """Captura EXACTO CAPTURE_SECONDS a SAMPLE_HZ y escribe recordings/v{idx}_{tag}.csv"""
     period = 1.0 / SAMPLE_HZ
     n_samples = int(round(CAPTURE_SECONDS * SAMPLE_HZ))
     rows = []
 
-    next_t = time.time()
-    for i in range(n_samples):
+    start_t = time.time()
+    next_t = start_t
+    for _ in range(n_samples):
         # Espera exacta al siguiente tick
         now = time.time()
         if now < next_t:
@@ -108,34 +117,75 @@ def capture_one_second():
         with _lock:
             row = [datetime.utcnow().isoformat(timespec="milliseconds"),
                    LAST["acc_x"], LAST["acc_y"], LAST["acc_z"],
-                   LAST["gyr_x"], LAST["gyr_y"], LAST["gyr_z"]]
+                   LAST["gyr_x"], LAST["gyr_y"], LAST["gyr_z"],
+                   tag]
         rows.append(row)
 
     # Escribe CSV
+    fname = f"v{idx}_{tag}.csv"
+    csv_path = os.path.join(OUT_DIR, fname)
     with open(csv_path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["timestamp","acc_x","acc_y","acc_z","gyr_x","gyr_y","gyr_z"])
+        w.writerow(["timestamp","acc_x","acc_y","acc_z","gyr_x","gyr_y","gyr_z","LR"])
         w.writerows(rows)
 
-    # Mini resumen
-    ax = [r[1] for r in rows]; ay = [r[2] for r in rows]; az = [r[3] for r in rows]
-    gx = [r[4] for r in rows]; gy = [r[5] for r in rows]; gz = [r[6] for r in rows]
-    def _std(a):
-        if not a: return 0.0
-        m = sum(a)/len(a)
-        return (sum((x-m)**2 for x in a)/len(a))**0.5
-    print(f"[OK] Guardado {csv_path}")
-    print(f"[SUM] muestras={len(rows)}  Hz≈{SAMPLE_HZ}  "
-          f"std_acc≈{(_std(ax)+_std(ay)+_std(az))/3:.4f}  "
-          f"std_gyr≈{(_std(gx)+_std(gy)+_std(gz))/3:.4f}")
+    # Pequeño resumen
+    print(f"[OK] {fname}  ({len(rows)} muestras, tag={tag})")
+    return csv_path
+
+def input_monitor():
+    """Hilo que permite cambiar el tag y salir:
+       - 'l' + Enter -> tag = L
+       - 'r' + Enter -> tag = R
+       - 'q' + Enter -> terminar
+    """
+    global CURRENT_TAG, STOP
+    print("[KEYS] Escribe 'l' (lento), 'r' (rápido) o 'q' (salir) y Enter.")
+    while not STOP:
+        try:
+            line = sys.stdin.readline()
+        except Exception:
+            break
+        if not line:
+            continue
+        cmd = line.strip().lower()
+        if cmd == 'l':
+            CURRENT_TAG = "L"
+            print("[TAG] Cambiado a L (lento)")
+        elif cmd == 'r':
+            CURRENT_TAG = "R"
+            print("[TAG] Cambiado a R (rápido)")
+        elif cmd == 'q':
+            print("[EXIT] Saliendo…")
+            STOP = True
+            break
 
 def main():
-    t = threading.Thread(target=udp_listener, daemon=True)
-    t.start()
+    global STOP  # 👈 aquí, al inicio
+
+    # Hilo UDP
+    t_udp = threading.Thread(target=udp_listener, daemon=True)
+    t_udp.start()
+
+    # Hilo entrada teclado
+    t_in = threading.Thread(target=input_monitor, daemon=True)
+    t_in.start()
+
+    # Espera primeros datos completos
+    print("[CAP] Esperando primeros datos (6 ejes)…")
+    _ready_evt.wait()
+    print("[CAP] Datos detectados. Comenzando captura continua de 1s/archivo…")
+
+    idx = next_index_from_disk()
     try:
-        capture_one_second()
+        while not STOP:
+            tag = CURRENT_TAG  # congelamos el tag al inicio del bloque
+            capture_block(idx, tag)
+            idx += 1
+            # inmediatamente inicia el siguiente bloque de 1s
+    except KeyboardInterrupt:
+        pass
     finally:
-        global STOP
         STOP = True
         time.sleep(0.1)
 

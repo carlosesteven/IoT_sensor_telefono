@@ -1,6 +1,7 @@
 # Documentación del servidor UDP + Flask
 
 ## Descripción general
+
 Este servidor combina un receptor UDP para datos de sensores con una aplicación web Flask
 que permite visualizar en tiempo real lecturas crudas y predicciones de actividad humana.
 La información se consume mediante Server-Sent Events (SSE) y se muestra en una tabla HTML
@@ -20,6 +21,7 @@ El código vive en `servidor.py` y utiliza las siguientes piezas principales:
    para monitoreo y depuración.
 
 ## Dependencias
+
 - **Python 3.9+** recomendado.
 - Librerías estándar (`socket`, `json`, `time`, `threading`, `datetime`, `collections`).
 - **Flask** para el servidor HTTP y SSE.
@@ -29,6 +31,7 @@ Los artefactos del modelo deben existir en `entreno/har_mlp.joblib` y
 `entreno/har_labels.json`.
 
 ## Configuración principal
+
 Las variables globales al inicio del archivo controlan el comportamiento del servidor:
 
 - `UDP_IP` / `UDP_PORT`: interfaz y puerto donde llega el datastream UDP.
@@ -45,6 +48,7 @@ Las variables globales al inicio del archivo controlan el comportamiento del ser
   predicción sobre la ventana completa.
 
 ## Flujo de datos
+
 1. **Recepción y parseo**:
    - `udp_loop` bloquea en `recvfrom` hasta recibir un paquete.
    - Se intenta decodificar a JSON y se normalizan las parejas `sensor:eje` mediante
@@ -68,14 +72,16 @@ Las variables globales al inicio del archivo controlan el comportamiento del ser
      inferida en el encabezado.
 
 ## Endpoints HTTP
-| Ruta          | Método | Descripción |
-|---------------|--------|-------------|
-| `/`           | GET    | Renderiza la UI con los últimos registros y el estado actual.
-| `/stream`     | GET    | Stream SSE que envía las filas nuevas en formato JSON.
-| `/reset`      | GET    | Limpia buffers, reinicia contadores y marca el inicio de captura.
-| `/api/latest` | GET    | Devuelve las últimas 100 filas en JSON (útil para depuración).
+
+| Ruta          | Método | Descripción                                                       |
+| ------------- | ------ | ----------------------------------------------------------------- |
+| `/`           | GET    | Renderiza la UI con los últimos registros y el estado actual.     |
+| `/stream`     | GET    | Stream SSE que envía las filas nuevas en formato JSON.            |
+| `/reset`      | GET    | Limpia buffers, reinicia contadores y marca el inicio de captura. |
+| `/api/latest` | GET    | Devuelve las últimas 100 filas en JSON (útil para depuración).    |
 
 ## Ejecución
+
 1. Asegúrate de que `UDP_IP` sea alcanzable por el emisor (por ejemplo, la IP local de tu
    computadora en la red).
 2. Lanza el script: `python servidor.py`.
@@ -84,6 +90,7 @@ Las variables globales al inicio del archivo controlan el comportamiento del ser
 4. Envía paquetes UDP con estructura JSON compatible (ver formato en la siguiente sección).
 
 ## Formato esperado de mensajes UDP
+
 El parser acepta múltiples formas:
 
 - Campos planos `"accel:x"`, `"gyro:z"`, etc.
@@ -94,18 +101,26 @@ El parser acepta múltiples formas:
 Cualquier valor que no pueda convertirse a `float` se ignora silenciosamente.
 
 ## Sincronización y seguridad
+
 - Se utiliza `_start_lock` para inicializar `start_time` una única vez cuando llegan datos.
 - `rows` es un `deque` compartido; las operaciones de append y lectura en Python son
   seguras para múltiples hilos en este contexto, pero podrían necesitar sincronización
   adicional si se añadieran escrituras más complejas.
 
 ## Reinicio del estado
+
 La ruta `/reset` limpia todos los buffers y reinicia el contador `NEXT_SEQ`, útil para
 comenzar una captura sin ruido residual.
 
 ## Extensiones sugeridas
+
 - Persistir historiales en disco en lugar de depender solo de memoria.
 - Exponer métricas Prometheus para monitorear tasa de paquetes y latencias.
 - Añadir autenticación básica al endpoint `/reset`.
 - Permitir configuración mediante variables de entorno o archivo `.env`.
 
+## Entorno PYTHON
+
+python3 -m venv .venv
+
+source .venv/bin/activate
