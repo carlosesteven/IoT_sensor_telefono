@@ -17,17 +17,14 @@ MESSAGE_LENGTH = 13  # 1 byte tipo + 3*4 bytes float LE
 
 # Mapa de tags -> sensor. Ajusta si tu app usa otros códigos para el byte 0.
 SENSOR_TAG_MAP = {
-    # ASCII
     ord('A'): "acc",  ord('a'): "acc",     # Accelerometer (total)
     ord('G'): "gyr",  ord('g'): "gyr",     # Gyroscope
     ord('V'): "grav", ord('v'): "grav",    # Gravity (vector)
-    # Numéricos de ejemplo
     1: "acc",
     2: "gyr",
     3: "grav",
 }
 
-# Últimos valores para detectar que los requeridos ya están llegando
 LAST = {
     "acc_x": None,  "acc_y": None,  "acc_z": None,
     "grav_x": None, "grav_y": None, "grav_z": None,
@@ -38,14 +35,12 @@ STOP = False
 _ready_evt = threading.Event()
 _lock = threading.Lock()
 
-# Buffer de paquetes crudos decodificados: cada item = (iso_ts, sensor, x, y, z, tag_char)
-BUFFER = deque()  # se vacía cada segundo al archivo
+# Buffer de paquetes ya decodificados: (timestamp_iso, sensor, x, y, z)
+BUFFER = deque()
 
-# Tag para rotular la captura (L=lento, R=rápido). Cambiable desde teclado.
-CURRENT_TAG = "L"
+CURRENT_TAG = "L"  # 'L' (lento) / 'R' (rápido)
 
 def iter_pairs_from_json_msg(msg: dict):
-    """Modo JSON (por si usas JSON en la app). Normaliza a acc_*, grav_*, gyr_*."""
     for k, v in list(msg.items()):
         if isinstance(k, str) and ":" in k:
             s, a = k.split(":", 1)
@@ -78,8 +73,7 @@ def iter_pairs_from_json_msg(msg: dict):
                     yield pref, a, val
 
 def decode_serialsensor_binary(pkt: bytes):
-    """Decodifica paquete binario 13B: [type][x][y][z] (floats LE).
-       Devuelve (sensor, x, y, z) o None."""
+    """Devuelve (sensor, x, y, z) o None."""
     if len(pkt) != MESSAGE_LENGTH:
         return None
     tag = pkt[0]
@@ -87,16 +81,13 @@ def decode_serialsensor_binary(pkt: bytes):
     if pref is None and 32 <= tag <= 126:
         pref = SENSOR_TAG_MAP.get(ord(chr(tag)))
     if pref not in ("acc", "gyr", "grav"):
-        # Debug para mapear nuevos tipos
-        print(f"[WARN] Tipo desconocido (byte0={tag}). Ajusta SENSOR_TAG_MAP.")
         return None
     try:
         x = struct.unpack_from('<f', pkt, 1)[0]
         y = struct.unpack_from('<f', pkt, 5)[0]
         z = struct.unpack_from('<f', pkt, 9)[0]
-        return (pref, float(x), float(y), float(z), tag)
-    except Exception as e:
-        print("[WARN] Error al decodificar floats LE:", e)
+        return (pref, float(x), float(y), float(z))
+    except Exception:
         return None
 
 def have_required_sensors():
@@ -126,21 +117,19 @@ def udp_listener():
 
         iso_ts = datetime.utcnow().isoformat(timespec="milliseconds")
 
-        # Binario
+        # Binario 13B
         if len(data) == MESSAGE_LENGTH:
             decoded = decode_serialsensor_binary(data)
             if decoded:
-                sensor, x, y, z, raw_tag = decoded
+                sensor, x, y, z = decoded
                 with _lock:
-                    # Actualiza LAST para "ready"
                     if sensor == "acc":
                         LAST["acc_x"], LAST["acc_y"], LAST["acc_z"] = x, y, z
                     elif sensor == "gyr":
                         LAST["gyr_x"], LAST["gyr_y"], LAST["gyr_z"] = x, y, z
                     elif sensor == "grav":
                         LAST["grav_x"], LAST["grav_y"], LAST["grav_z"] = x, y, z
-                    # Apila muestra cruda
-                    BUFFER.append((iso_ts, sensor, x, y, z, raw_tag))
+                    BUFFER.append((iso_ts, sensor, x, y, z))
                     if have_required_sensors():
                         _ready_evt.set()
             continue
@@ -171,8 +160,7 @@ def udp_listener():
                         LAST["gyr_x"], LAST["gyr_y"], LAST["gyr_z"] = x, y, z
                     elif pref == "grav":
                         LAST["grav_x"], LAST["grav_y"], LAST["grav_z"] = x, y, z
-                    # Apila cada paquete lógico como una fila
-                    BUFFER.append((iso_ts, pref, x, y, z, None))
+                    BUFFER.append((iso_ts, pref, x, y, z))
                 if have_required_sensors():
                     _ready_evt.set()
     sock.close()
@@ -191,49 +179,49 @@ def next_index_from_disk():
     return mx + 1
 
 def drain_buffer_rows():
-    """Saca todo lo acumulado en BUFFER y devuelve filas CSV.
-       Cada fila: [timestamp, sensor, x, y, z, raw_tag, LR]"""
+    """Saca todo lo acumulado en BUFFER y devuelve filas CSV:
+       [timestamp, sensor, x, y, z, LR]"""
     rows = []
     with _lock:
         while BUFFER:
-            ts, sensor, x, y, z, raw_tag = BUFFER.popleft()
-            rows.append([ts, sensor, x, y, z, raw_tag, CURRENT_TAG])
+            ts, sensor, x, y, z = BUFFER.popleft()
+            #rows.append([ts, sensor, x, y, z, CURRENT_TAG])
+            rows.append([ts, x, y, z, CURRENT_TAG])
     return rows
 
 def capture_every_second():
-    """Cada segundo: toma TODO lo recibido en ese intervalo y lo vuelca a un CSV."""
+    """Cada segundo: toma TODO lo recibido en ese intervalo y lo vuelca a un CSV.
+       No crea archivo si no hubo datos."""
     idx = next_index_from_disk()
     try:
         while not STOP:
             t0 = time.time()
-            # Espera hasta completar ~1 segundo
             while True:
                 if STOP:
                     return
                 if time.time() - t0 >= CAPTURE_SECONDS:
                     break
-                time.sleep(0.01)  # pequeña espera activa
+                time.sleep(0.01)
 
-            # Drenar y escribir
             rows = drain_buffer_rows()
-            fname = f"v{idx}_{CURRENT_TAG}.csv"
+            if not rows:
+                # No se escribe nada si no hubo paquetes en este segundo
+                continue
+
+            fname = f"{CURRENT_TAG}{idx}.csv"
             csv_path = os.path.join(OUT_DIR, fname)
             with open(csv_path, "w", newline="") as f:
                 w = csv.writer(f)
-                w.writerow(["timestamp","sensor","x","y","z","raw_tag","LR"])
+                #w.writerow(["t","Sensor","Ax","Ay","Az","Label"])
+                w.writerow(["t","Ax","Ay","Az","Label"])
                 w.writerows(rows)
             print(f"[OK] {fname}  ({len(rows)} paquetes)")
-
             idx += 1
     except KeyboardInterrupt:
         pass
 
 def input_monitor():
-    """Teclas:
-       - 'l' + Enter -> tag = L
-       - 'r' + Enter -> tag = R
-       - 'q' + Enter -> terminar
-    """
+    """l = Lento | r = Rápido | q = Salir"""
     global STOP, CURRENT_TAG
     print("[KEYS] Escribe 'l' (lento), 'r' (rápido) o 'q' (salir).")
     while not STOP:
@@ -250,9 +238,7 @@ def input_monitor():
 
 def main():
     global STOP
-    # Hilo UDP (productor)
     t_udp = threading.Thread(target=udp_listener, daemon=True); t_udp.start()
-    # Hilo input
     t_in  = threading.Thread(target=input_monitor, daemon=True); t_in.start()
 
     req = "+".join(sorted(REQUIRE_SENSORS))
@@ -260,9 +246,7 @@ def main():
     _ready_evt.wait()
     print("[CAP] Iniciando archivos de 1s con TODO lo recibido (sin límite de muestras)…")
 
-    # Hilo capturador por ventanas de 1s (consumidor)
     capture_every_second()
-
     STOP = True
     time.sleep(0.1)
 
