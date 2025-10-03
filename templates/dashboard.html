@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <title>Movimiento Rápido/Lento • Realtime</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+
     <!-- Bootstrap 4 -->
     <link
       rel="stylesheet"
@@ -14,162 +15,375 @@
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css"
     />
+
     <style>
+      :root {
+        --bg: #0e1117;
+        --card: #131a22;
+        --muted: #96a2b4;
+        --text: #e6edf3;
+        --line: #202938;
+        --ok: #22c55e;
+        --bad: #ef4444;
+        --info: #60a5fa;
+        --accent: #8b5cf6;
+      }
+      html,
       body {
-        background: #0f1115;
-        color: #eaeef2;
+        height: 100%;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+      }
+      .navbar {
+        background: linear-gradient(90deg, #0e1117, #101822);
+      }
+      .brand {
+        font-weight: 700;
+        letter-spacing: 0.3px;
+      }
+      .brand i {
+        color: #ffd166;
+        margin-right: 0.5rem;
       }
       .card {
-        background: #151922;
-        border: none;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 16px;
       }
-      .badge-lg {
-        font-size: 1.2rem;
+      .card-body {
+        padding: 1.1rem 1.25rem;
       }
-      .title {
-        letter-spacing: 0.3px;
+      .muted {
+        color: var(--muted);
       }
       .value {
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas,
           "Liberation Mono", monospace;
       }
-      .icon-big {
-        font-size: 3rem;
-        vertical-align: middle;
+      .kpi {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
       }
-      .label-R {
-        color: #ff6b6b;
+      .kpi .icon {
+        width: 34px;
+        height: 34px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0f172a;
+        color: #9db7ff;
       }
-      .label-L {
-        color: #2ecc71;
-      }
-      .footer {
-        color: #aab2bd;
+      .kpi .label {
+        color: var(--muted);
         font-size: 0.9rem;
       }
-      .table td,
-      .table th {
-        border-color: #232a36 !important;
+      .kpi .val {
+        font-weight: 700;
+      }
+
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.5rem 1rem;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        font-weight: 800;
+        letter-spacing: 0.6px;
+      }
+      .status-L {
+        color: var(--ok);
+        background: rgba(34, 197, 94, 0.1);
+      }
+      .status-R {
+        color: var(--bad);
+        background: rgba(239, 68, 68, 0.1);
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: currentColor;
+        box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.06);
+      }
+      .blink {
+        animation: blink 1s linear infinite;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0.5;
+        }
+      }
+
+      .progress {
+        height: 12px;
+        border-radius: 999px;
+        background: #0f172a;
+      }
+      .progress-bar {
+        background: linear-gradient(90deg, #60a5fa, #8b5cf6);
+      }
+
+      .feature-tile {
+        border: 1px dashed #1f2836;
+        border-radius: 14px;
+        padding: 0.9rem 1rem;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      .feature-name {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      .feature-val {
+        font-size: 1.25rem;
+        font-weight: 700;
+      }
+      .footer {
+        color: var(--muted);
       }
     </style>
   </head>
   <body>
-    <div class="container py-4">
-      <div class="d-flex align-items-center mb-4">
-        <i class="fa fa-bolt icon-big mr-3"></i>
-        <h3 class="m-0 title">Clasificador de Movimiento – Realtime</h3>
+    <!-- Header -->
+    <nav class="navbar navbar-dark">
+      <div
+        class="container d-flex align-items-center justify-content-between py-2"
+      >
+        <div class="brand d-flex align-items-center">
+          <i class="fa fa-bolt"></i>
+          <span>Clasificador de Movimiento – Realtime</span>
+        </div>
+        <div class="d-none d-md-block muted">
+          Ventana <span class="value">{{win}}s</span> • Paso
+          <span class="value">{{step}}s</span> • UDP
+          <span class="value">{{udp_host}}:{{udp_port}}</span> • Modelo
+          <span class="value">{{model_path}}</span>
+        </div>
       </div>
+    </nav>
 
+    <div class="container py-3">
+      <!-- KPIs top row -->
       <div class="row">
-        <div class="col-lg-5 mb-3">
-          <div class="card p-3">
-            <div class="d-flex align-items-center justify-content-between">
+        <div class="col-md-3 mb-3">
+          <div class="card h-100">
+            <div class="card-body d-flex align-items-center">
+              <div class="icon mr-3"><i class="fa fa-signal"></i></div>
               <div>
-                <div class="text-muted">Estado actual</div>
-                <div id="pred_label" class="h2 mb-1 label-L">Lento</div>
-                <div class="text-muted">
-                  <i class="fa fa-clock-o"></i> <span id="updated_at">—</span>
+                <div class="kpi">
+                  <div class="icon"><i class="fa fa-tag"></i></div>
+                  <div>
+                    <div class="label">Etiqueta</div>
+                    <div id="kpi_label" class="val">—</div>
+                  </div>
                 </div>
               </div>
-              <div class="text-right">
-                <div class="mb-2">
-                  <span class="badge badge-pill badge-info badge-lg">
-                    <i class="fa fa-database"></i> n=<span id="n">0</span>
-                  </span>
-                </div>
-                <div>
-                  <span class="badge badge-pill badge-secondary badge-lg">
-                    <i class="fa fa-random"></i> Prob. rápido:
-                    <span class="value" id="prob">0.000</span>
-                  </span>
-                </div>
-              </div>
-            </div>
-            <hr />
-            <div class="small footer">
-              <i class="fa fa-info-circle"></i>
-              Ventana {{win}}s • Paso {{step}}s • UDP {{udp_host}}:{{udp_port}}
-              • Modelo: {{model_path}}
             </div>
           </div>
         </div>
-
-        <div class="col-lg-7 mb-3">
-          <div class="card p-3">
-            <div class="d-flex align-items-center mb-2">
-              <i class="fa fa-sliders icon-big mr-3"></i>
-              <h5 class="m-0">Características (F1–F5)</h5>
+        <div class="col-md-3 mb-3">
+          <div class="card h-100">
+            <div class="card-body d-flex align-items-center">
+              <div class="kpi">
+                <div class="icon"><i class="fa fa-random"></i></div>
+                <div>
+                  <div class="label">Prob. rápido</div>
+                  <div class="val"><span id="kpi_prob">0.000</span></div>
+                </div>
+              </div>
+              <div class="w-100 ml-3">
+                <div class="progress">
+                  <div
+                    id="prob_bar"
+                    class="progress-bar"
+                    role="progressbar"
+                    style="width: 0%"
+                  ></div>
+                </div>
+              </div>
             </div>
-            <table class="table table-sm table-dark">
-              <thead>
-                <tr>
-                  <th>Feature</th>
-                  <th>Valor</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>F1 = mean(Ax)</td>
-                  <td class="value" id="f1">—</td>
-                </tr>
-                <tr>
-                  <td>F2 = mean(Ay)</td>
-                  <td class="value" id="f2">—</td>
-                </tr>
-                <tr>
-                  <td>F3 = mean(Az)</td>
-                  <td class="value" id="f3">—</td>
-                </tr>
-                <tr>
-                  <td>F4 = mean(std(Ax,Ay,Az))</td>
-                  <td class="value" id="f4">—</td>
-                </tr>
-                <tr>
-                  <td>F5 = mean(|A|)</td>
-                  <td class="value" id="f5">—</td>
-                </tr>
-              </tbody>
-            </table>
+          </div>
+        </div>
+        <div class="col-md-3 mb-3">
+          <div class="card h-100">
+            <div class="card-body d-flex align-items-center">
+              <div class="kpi">
+                <div class="icon"><i class="fa fa-database"></i></div>
+                <div>
+                  <div class="label">Muestras ventana</div>
+                  <div class="val"><span id="kpi_n">0</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3 mb-3">
+          <div class="card h-100">
+            <div class="card-body d-flex align-items-center">
+              <div class="kpi">
+                <div class="icon"><i class="fa fa-clock-o"></i></div>
+                <div>
+                  <div class="label">Última actualización</div>
+                  <div class="val"><span id="kpi_time">—</span></div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="text-center text-muted mt-3 footer">
-        <i class="fa fa-heart"></i> Realtime dashboard • Refresh {{poll}} ms
+      <!-- Main row -->
+      <div class="row">
+        <!-- Left: big status -->
+        <div class="col-lg-5 mb-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <div
+                class="d-flex align-items-center justify-content-between mb-2"
+              >
+                <div class="muted">Estado actual</div>
+                <div id="live_dot" class="dot blink" title="vivo"></div>
+              </div>
+              <div id="status_pill" class="status-pill status-L mb-3">
+                <span class="dot"></span>
+                <span id="pred_label" style="font-size: 1.25rem">L</span>
+              </div>
+
+              <div class="muted mb-1">
+                <i class="fa fa-random"></i> Probabilidad
+              </div>
+              <div class="d-flex align-items-center">
+                <div class="value mr-3" id="prob_text">0.000</div>
+                <div class="w-100">
+                  <div class="progress">
+                    <div
+                      id="prob_bar2"
+                      class="progress-bar"
+                      role="progressbar"
+                      style="width: 0%"
+                    ></div>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                id="stale"
+                class="mt-3 alert alert-warning py-2 px-3"
+                style="display: none"
+              >
+                <i class="fa fa-exclamation-triangle"></i> Sin datos recientes
+                (¿está enviando la app?).
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: features grid -->
+        <div class="col-lg-7 mb-4">
+          <div class="row">
+            <div class="col-md-6 mb-3">
+              <div class="feature-tile">
+                <div class="feature-name">F1 = mean(Ax)</div>
+                <div id="f1" class="feature-val value">—</div>
+              </div>
+            </div>
+            <div class="col-md-6 mb-3">
+              <div class="feature-tile">
+                <div class="feature-name">F2 = mean(Ay)</div>
+                <div id="f2" class="feature-val value">—</div>
+              </div>
+            </div>
+            <div class="col-md-6 mb-3">
+              <div class="feature-tile">
+                <div class="feature-name">F3 = mean(Az)</div>
+                <div id="f3" class="feature-val value">—</div>
+              </div>
+            </div>
+            <div class="col-md-6 mb-3">
+              <div class="feature-tile">
+                <div class="feature-name">F4 = mean(std(Ax,Ay,Az))</div>
+                <div id="f4" class="feature-val value">—</div>
+              </div>
+            </div>
+            <div class="col-md-12 mb-1">
+              <div class="feature-tile">
+                <div class="feature-name">F5 = mean(|A|)</div>
+                <div id="f5" class="feature-val value">—</div>
+              </div>
+            </div>
+          </div>
+          <div class="footer small mt-2">
+            <i class="fa fa-info-circle"></i>
+            Ventana {{win}}s • Paso {{step}}s • UDP {{udp_host}}:{{udp_port}} •
+            Modelo: {{model_path}} • Refresh {{poll}} ms
+          </div>
+        </div>
       </div>
     </div>
 
     <script>
-      function refresh() {
-        fetch('/api/status')
-          .then(r => r.json())
-          .then(s => {
-            const elLabel = document.getElementById('pred_label');
-            const elProb  = document.getElementById('prob');
-            const elN     = document.getElementById('n');
-            const elTime  = document.getElementById('updated_at');
-            const f1 = document.getElementById('f1');
-            const f2 = document.getElementById('f2');
-            const f3 = document.getElementById('f3');
-            const f4 = document.getElementById('f4');
-            const f5 = document.getElementById('f5');
+      var lastTs = null;
 
-            elLabel.textContent = s.label || '—';
-            elLabel.classList.remove('label-R','label-L');
-            elLabel.classList.add(s.label === 'R' ? 'label-R' : 'label-L');
-            elProb.textContent = (s.prob_rapido !== null) ? s.prob_rapido.toFixed(3) : '—';
-            elN.textContent = s.n || 0;
-            elTime.textContent = s.updated_at || '—';
-            const F = s.F || [null,null,null,null,null];
-            f1.textContent = F[0] !== null ? F[0].toFixed(3) : '—';
-            f2.textContent = F[1] !== null ? F[1].toFixed(3) : '—';
-            f3.textContent = F[2] !== null ? F[2].toFixed(3) : '—';
-            f4.textContent = F[3] !== null ? F[3].toFixed(3) : '—';
-            f5.textContent = F[4] !== null ? F[4].toFixed(3) : '—';
+      function paintLabel(lbl){
+        var pill = document.getElementById('status_pill');
+        pill.classList.remove('status-L','status-R');
+        pill.classList.add(lbl === 'R' ? 'status-R' : 'status-L');
+        document.getElementById('pred_label').textContent = lbl || '—';
+        document.getElementById('kpi_label').textContent  = lbl || '—';
+      }
+      function paintProb(p){
+        p = Number(p||0);
+        var pct = Math.max(0, Math.min(100, Math.round(p*100)));
+        document.getElementById('prob_text').textContent = p.toFixed(3);
+        document.getElementById('kpi_prob').textContent  = p.toFixed(3);
+        document.getElementById('prob_bar').style.width  = pct + '%';
+        document.getElementById('prob_bar2').style.width = pct + '%';
+        document.getElementById('prob_bar').setAttribute('aria-valuenow', pct);
+        document.getElementById('prob_bar2').setAttribute('aria-valuenow', pct);
+      }
+      function paintFeatures(F){
+        var ids=['f1','f2','f3','f4','f5'];
+        for (var i=0;i<5;i++){
+          var el=document.getElementById(ids[i]);
+          var v=(F && F[i]!==null) ? Number(F[i]).toFixed(3) : '—';
+          el.textContent=v;
+        }
+      }
+      function paintMeta(n, ts){
+        document.getElementById('kpi_n').textContent   = n || 0;
+        document.getElementById('kpi_time').textContent= ts || '—';
+        lastTs = ts;
+      }
+      function checkStale(){
+        if(!lastTs) return;
+        var now = Date.now();
+        var t = new Date(lastTs.replace(' ','T')).getTime();
+        var stale = (now - t) > 2500;
+        document.getElementById('stale').style.display = stale ? 'block' : 'none';
+        document.getElementById('live_dot').style.opacity = stale ? .3 : 1;
+      }
+
+      function refresh(){
+        fetch('/api/status')
+          .then(r=>r.json())
+          .then(s=>{
+            paintLabel(s.label || '—');
+            paintProb(s.prob_rapido || 0);
+            paintFeatures(s.F || [null,null,null,null,null]);
+            paintMeta(s.n, s.updated_at);
+            checkStale();
           })
-          .catch(() => {});
+          .catch(()=>{});
       }
       setInterval(refresh, {{poll}});
+      setInterval(checkStale, 800);
       refresh();
     </script>
   </body>
