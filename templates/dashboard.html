@@ -330,6 +330,7 @@
 
     <script>
       var lastTs = null;
+      var lastSeenClient = null; // ← NUEVO: marca de tiempo local de la última actualización
 
       function paintLabel(lbl){
           var pill = document.getElementById('status_pill');
@@ -378,16 +379,19 @@
       }
 
       function refresh(){
-          fetch('/api/status')
-          .then(r=>r.json())
-          .then(s=>{
-              paintLabel(s.label || '—');
-              paintProb(s.prob_rapido || 0);
-              paintFeatures(s.F || [null,null,null,null,null]);
-              paintMeta(s.n, s.updated_at);
-              checkStale();
-          })
-          .catch(()=>{});
+          fetch('/api/status?x=' + Date.now(), {cache: 'no-store'})
+            .then(r=>r.json())
+            .then(s=>{
+                paintLabel(s.label || '—');
+                paintProb(s.prob_rapido || 0);
+                paintFeatures(s.F || [null,null,null,null,null]);
+                paintMeta(s.n, s.updated_at);
+
+                // ⚡ Marca hora de última respuesta (cliente)
+                lastSeenClient = Date.now();
+                document.getElementById('stale').style.display = 'none';
+            })
+            .catch(()=>{});
       }
       setInterval(refresh, {{poll}});
       setInterval(checkStale, 800);
