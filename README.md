@@ -1,126 +1,120 @@
-# Documentación del servidor UDP + Flask
+# Servidores de inferencia desde sensores UDP
 
-## Descripción general
+Este repositorio contiene dos implementaciones para capturar lecturas de acelerómetro
+provenientes de Serial Sensor (o fuentes compatibles) vía UDP, extraer características y
+clasificar el movimiento como **Rápido (R)** o **Lento (L)** con un modelo entrenado
+previamente.
 
-Este servidor combina un receptor UDP para datos de sensores con una aplicación web Flask
-que permite visualizar en tiempo real lecturas crudas y predicciones de actividad humana.
-La información se consume mediante Server-Sent Events (SSE) y se muestra en una tabla HTML
-mientras que un modelo de clasificación previamente entrenado infiere la actividad actual.
+* `servidor_basico.py`: versión de consola que imprime las predicciones en tiempo real.
+* `servidor_web.py`: variante con tablero web (Flask) que expone el estado mediante una API
+  y una interfaz HTML.
 
-El código vive en `servidor.py` y utiliza las siguientes piezas principales:
+## Requisitos previos
 
-1. **Recepción UDP** (`udp_loop`): escucha paquetes JSON provenientes de un dispositivo IoT
-   (por ejemplo, un teléfono) y normaliza sus campos.
-2. **Gestión de buffers** (`BUFF`, `LAST` y lógica asociada): construye una ventana móvil
-   con las últimas lecturas de acelerómetro y giroscopio para alimentar al modelo.
-3. **Extracción de características** (`_feat_block`, `_make_feature_vector_from_buffers`):
-   calcula estadísticas para cada eje y magnitudes combinadas.
-4. **Predicción con modelo MLP** (`_try_predict_and_push_row`): obtiene probabilidades y
-   publica resultados en el stream.
-5. **API HTTP y UI** (`Flask`): expone endpoints `/`, `/stream`, `/reset` y `/api/latest`
-   para monitoreo y depuración.
+- Python **3.9 o superior**.
+- Un archivo de modelo `IA_Movimientos.joblib` entrenado previamente (ubicado según cada
+  script).
+- Paquetes UDP emitidos por el dispositivo IoT con formato binario de Serial Sensor o JSON
+  con campos `accel`/`acc` en ejes `x`, `y`, `z`.
 
-## Dependencias
+## Preparar el entorno
 
-- **Python 3.9+** recomendado.
-- Librerías estándar (`socket`, `json`, `time`, `threading`, `datetime`, `collections`).
-- **Flask** para el servidor HTTP y SSE.
-- **joblib** y **numpy** para cargar el modelo y procesar las características.
+Se recomienda aislar las dependencias en un entorno virtual:
 
-Los artefactos del modelo deben existir en `entreno/har_mlp.joblib` y
-`entreno/har_labels.json`.
-
-## Configuración principal
-
-Las variables globales al inicio del archivo controlan el comportamiento del servidor:
-
-- `UDP_IP` / `UDP_PORT`: interfaz y puerto donde llega el datastream UDP.
-- `SENSORS_TO_COLLECT`: subconjunto de sensores a aceptar (`{"gyro", "accel", "gps"}`) o
-  `None` para todos.
-- `MAX_ROWS_MEMORY`: máximo de filas que se almacenan para mostrarse en la UI.
-- `STREAM_INTERVAL_SEC`: frecuencia con la que se envían eventos SSE a los clientes.
-- `HTTP_HOST` / `HTTP_PORT`: configuración del servidor Flask.
-- `MODEL_PATH`, `LABELS_JSON`, `WINDOW`: rutas al modelo y etiquetas, tamaño de ventana de
-  128 muestras como en el dataset UCI HAR.
-- `SAMPLE_HZ`: frecuencia con la que se toma una muestra de los buffers `LAST` (60 Hz por
-  defecto). De ella se deriva `SAMPLE_PERIOD`.
-- `PRED_EVERY`: cantidad de muestras nuevas necesarias para volver a ejecutar la
-  predicción sobre la ventana completa.
-
-## Flujo de datos
-
-1. **Recepción y parseo**:
-   - `udp_loop` bloquea en `recvfrom` hasta recibir un paquete.
-   - Se intenta decodificar a JSON y se normalizan las parejas `sensor:eje` mediante
-     `iter_pairs_from_msg`.
-2. **Filtrado y almacenamiento**:
-   - Cada par se transforma en una fila con timestamp ISO y se agrega a `rows` (un `deque`).
-   - `LAST` actualiza el último valor por eje para `accel` y `gyro`.
-3. **Muestreo temporal**:
-   - Cada `SAMPLE_PERIOD` segundos se toma una muestra coherente (misma marca temporal) y se
-     inserta en los buffers `BUFF`.
-4. **Predicción**:
-   - Al acumular `WINDOW` muestras por eje y haber pasado `PRED_EVERY` muestras desde la
-     última inferencia, `_try_predict_and_push_row` genera un vector de características
-     concatenando estadísticas (`mean`, `std`, `min`, `max`, `rms`, `mad`).
-   - Se consulta `MODEL.predict_proba` y `MODEL.predict` para obtener la etiqueta y la
-     confianza máxima; se publica como una fila especial `pred:<LABEL>`.
-5. **Consumo en la UI**:
-   - La ruta `/stream` ofrece SSE; cada cliente solo recibe filas nuevas gracias a la
-     columna `seq`.
-   - El frontend actualiza la tabla con las últimas 20 filas y muestra la actividad
-     inferida en el encabezado.
-
-## Endpoints HTTP
-
-| Ruta          | Método | Descripción                                                       |
-| ------------- | ------ | ----------------------------------------------------------------- |
-| `/`           | GET    | Renderiza la UI con los últimos registros y el estado actual.     |
-| `/stream`     | GET    | Stream SSE que envía las filas nuevas en formato JSON.            |
-| `/reset`      | GET    | Limpia buffers, reinicia contadores y marca el inicio de captura. |
-| `/api/latest` | GET    | Devuelve las últimas 100 filas en JSON (útil para depuración).    |
-
-## Ejecución
-
-1. Asegúrate de que `UDP_IP` sea alcanzable por el emisor (por ejemplo, la IP local de tu
-   computadora en la red).
-2. Lanza el script: `python servidor.py`.
-3. El hilo UDP se iniciará automáticamente y Flask servirá la UI en
-   `http://HTTP_HOST:HTTP_PORT`.
-4. Envía paquetes UDP con estructura JSON compatible (ver formato en la siguiente sección).
-
-## Formato esperado de mensajes UDP
-
-El parser acepta múltiples formas:
-
-- Campos planos `"accel:x"`, `"gyro:z"`, etc.
-- Objeto `sensordata` con subdiccionarios por sensor (`{"accel": {"x": 0.1, ...}}`).
-- Listas de 3 elementos (`{"gyro": [x, y, z]}`).
-- Campos sueltos `x`, `y`, `z` dentro de `sensordata`, que se asignan a `gyro` o `accel`.
-
-Cualquier valor que no pueda convertirse a `float` se ignora silenciosamente.
-
-## Sincronización y seguridad
-
-- Se utiliza `_start_lock` para inicializar `start_time` una única vez cuando llegan datos.
-- `rows` es un `deque` compartido; las operaciones de append y lectura en Python son
-  seguras para múltiples hilos en este contexto, pero podrían necesitar sincronización
-  adicional si se añadieran escrituras más complejas.
-
-## Reinicio del estado
-
-La ruta `/reset` limpia todos los buffers y reinicia el contador `NEXT_SEQ`, útil para
-comenzar una captura sin ruido residual.
-
-## Extensiones sugeridas
-
-- Persistir historiales en disco en lugar de depender solo de memoria.
-- Exponer métricas Prometheus para monitorear tasa de paquetes y latencias.
-- Añadir autenticación básica al endpoint `/reset`.
-- Permitir configuración mediante variables de entorno o archivo `.env`.
-
-## Entorno PYTHON
-
+```bash
 python3 -m venv .venv
-
 source .venv/bin/activate
+pip install --upgrade pip
+```
+
+### Instalación de librerías
+
+Ambos scripts comparten dependencias científicas para el cálculo de características y la
+carga del modelo. Además, la versión web necesita Flask para la API.
+
+```bash
+pip install numpy pandas joblib
+pip install flask  # requerido solo para servidor_web.py
+```
+
+Si prefieres un único comando, puedes instalar todo de una vez:
+
+```bash
+pip install numpy pandas joblib flask
+```
+
+## Variables principales
+
+Cada script declara constantes de configuración al inicio del archivo:
+
+- `UDP_HOST` y `UDP_PORT`: interfaz y puerto donde se reciben las lecturas.
+- `WINDOW_SEC`: segundos considerados en la ventana deslizante para generar características.
+- `STEP_SEC`: intervalo mínimo entre predicciones consecutivas.
+- `MODEL_PATH`: ruta relativa al artefacto `.joblib` con el modelo de clasificación.
+- `HTTP_HOST`, `HTTP_PORT` y `POLL_MS`: exclusivos de `servidor_web.py` para el servicio
+  Flask.
+
+## Ejecución del servidor básico
+
+1. Copia o enlaza tu archivo `IA_Movimientos.joblib` en `entrenamiento/`.
+2. Activa el entorno virtual y ve al directorio del proyecto.
+3. Lanza el script:
+
+   ```bash
+   python servidor_basico.py
+   ```
+
+4. El programa escuchará en `UDP_HOST:UDP_PORT`, mantendrá una ventana deslizante y mostrará
+   la predicción junto a las cinco características (F1–F5) en consola.
+
+## Ejecución del servidor web
+
+1. Asegúrate de colocar `IA_Movimientos.joblib` en la raíz del repositorio (o ajusta la
+   constante `MODEL_PATH`).
+2. Arranca el proceso:
+
+   ```bash
+   python servidor_web.py
+   ```
+
+3. Se inicia un hilo dedicado a escuchar UDP y a calcular las predicciones. El hilo va
+   actualizando un estado compartido que el frontend consulta periódicamente.
+4. Accede a `http://HTTP_HOST:HTTP_PORT` para visualizar el tablero. El endpoint
+   `/api/status` devuelve el último resultado en JSON, útil para integraciones.
+
+## Formatos de mensaje admitidos
+
+Ambos servidores aceptan:
+
+- Tramas binarias de 13 bytes con la firma de Serial Sensor (`A` + tres flotantes little
+  endian).
+- Mensajes JSON con claves tipo `"accel:x"`, o estructuras anidadas bajo `sensordata`
+  (`{"accel": {"x": ..., "y": ..., "z": ...}}`). Los valores deben ser numéricos.
+
+Los datos se filtran para asegurar que existan los tres ejes antes de alimentar la ventana.
+
+## Salida de predicción
+
+Los cinco atributos calculados son:
+
+1. **F1** – media de `Ax`.
+2. **F2** – media de `Ay`.
+3. **F3** – media de `Az`.
+4. **F4** – media de las desviaciones estándar de los tres ejes.
+5. **F5** – magnitud promedio del vector de aceleración.
+
+Cuando el modelo no puede cargarse, ambos scripts aplican un umbral empírico sobre **F5**
+para distinguir entre movimientos rápidos y lentos.
+
+## Depuración y personalización
+
+- Ajusta `WINDOW_SEC` y `STEP_SEC` según la cadencia de paquetes que emite tu dispositivo.
+- Si utilizas otro formato de mensaje, amplía las funciones de decodificación en cada
+  archivo (sección "DECODIFICACIÓN").
+- Puedes sustituir el modelo por otro artefacto compatible con `scikit-learn` siempre que
+  exponga `predict_proba`.
+
+## Apagar los servidores
+
+Presiona `Ctrl+C` en la terminal para detener cualquiera de los scripts. Los sockets se
+cierran limpiamente en ambos casos.
