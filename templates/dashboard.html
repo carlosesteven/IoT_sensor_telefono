@@ -2,15 +2,19 @@
 <html lang="es">
   <head>
     <meta charset="utf-8" />
-    <title>Movimiento Rápido/Lento • Realtime</title>
+    <title>Clasificador de Movimiento – En Tiempo Real</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
 
     <!-- Bootstrap 4 -->
     <link
       rel="stylesheet"
-      href="https://stackpath.bootstrapcdn.com/bootstrap/4.6.2/css/bootstrap.min.css"
+      href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css"
     />
     <!-- Font Awesome 4 -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css"
+    />
     <link
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css"
@@ -161,18 +165,18 @@
       >
         <div class="brand d-flex align-items-center">
           <i class="fa fa-bolt"></i>
-          <span>Clasificador de Movimiento – Realtime</span>
+          <span>Clasificador de Movimiento – En Tiempo Real</span>
         </div>
-        <div class="d-none d-md-block muted">
-          Ventana <span class="value">{{win}}s</span> • Paso
-          <span class="value">{{step}}s</span> • UDP
-          <span class="value">{{udp_host}}:{{udp_port}}</span> • Modelo
-          <span class="value">{{model_path}}</span>
-        </div>
+      </div>
+      <div class="d-none d-md-block muted">
+        Ventana <span class="value">{{win}}s</span> • Paso
+        <span class="value">{{step}}s</span> • UDP
+        <span class="value">{{udp_host}}:{{udp_port}}</span> • Modelo
+        <span class="value">{{model_path}}</span>
       </div>
     </nav>
 
-    <div class="container py-3">
+    <div class="container-fluid py-3">
       <!-- KPIs top row -->
       <div class="row">
         <div class="col-md-3 mb-3">
@@ -251,7 +255,7 @@
               <div
                 class="d-flex align-items-center justify-content-between mb-2"
               >
-                <div class="muted">Estado actual</div>
+                <div class="muted">Estado Actual</div>
                 <div id="live_dot" class="dot blink" title="vivo"></div>
               </div>
               <div id="status_pill" class="status-pill status-L mb-3">
@@ -325,7 +329,7 @@
           <div class="footer small mt-2">
             <i class="fa fa-info-circle"></i>
             Ventana {{win}}s • Paso {{step}}s • UDP {{udp_host}}:{{udp_port}} •
-            Modelo: {{model_path}} • Refresh {{poll}} ms
+            Modelo: {{model_path}} • Actualización {{poll}} ms
           </div>
         </div>
       </div>
@@ -400,5 +404,8 @@
       setInterval(checkStale, 800);
       refresh();
     </script>
+
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"></script>
   </body>
 </html>
