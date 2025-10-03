@@ -82,6 +82,50 @@ Cada script declara constantes de configuración al inicio del archivo:
 4. Accede a `http://HTTP_HOST:HTTP_PORT` para visualizar el tablero. El endpoint
    `/api/status` devuelve el último resultado en JSON, útil para integraciones.
 
+### Ejecutar `servidor_web.py` con `nohup`
+
+Para mantener el servidor web activo después de cerrar la terminal puedes usar `nohup`.
+
+- **Sin registro alguno** (descarta toda la salida estándar y de error):
+
+  ```bash
+  nohup python servidor_web.py > /dev/null 2>&1 &
+  ```
+
+- **Sin archivo de log dedicado** (la salida se almacena en `nohup.out` por defecto):
+
+  ```bash
+  nohup python servidor_web.py &
+  ```
+
+- **Con un archivo de log específico** para revisar la salida estándar y de error:
+
+  ```bash
+  nohup python servidor_web.py > servidor_web.log 2>&1 &
+  ```
+
+#### Supervisar y detener el proceso
+
+Tras lanzar el servidor con `nohup`, puedes verificar si sigue activo consultando la
+tabla de procesos:
+
+```bash
+pgrep -fl servidor_web.py
+```
+
+Cuando desees finalizarlo, envía la señal `TERM` al PID obtenido (sustituye `<PID>` por
+el identificador concreto):
+
+```bash
+kill <PID>
+```
+
+Si prefieres terminar todas las instancias en un solo paso, puedes usar `pkill`:
+
+```bash
+pkill -f servidor_web.py
+```
+
 ## Formatos de mensaje admitidos
 
 Ambos servidores aceptan:
