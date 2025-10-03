@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <title>Movimiento Rápido/Lento • Realtime</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Bootstrap 4 -->
+    <link
+      rel="stylesheet"
+      href="https://stackpath.bootstrapcdn.com/bootstrap/4.6.2/css/bootstrap.min.css"
+    />
+    <!-- Font Awesome 4 -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css"
+    />
+    <style>
+      body {
+        background: #0f1115;
+        color: #eaeef2;
+      }
+      .card {
+        background: #151922;
+        border: none;
+      }
+      .badge-lg {
+        font-size: 1.2rem;
+      }
+      .title {
+        letter-spacing: 0.3px;
+      }
+      .value {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas,
+          "Liberation Mono", monospace;
+      }
+      .icon-big {
+        font-size: 3rem;
+        vertical-align: middle;
+      }
+      .label-R {
+        color: #ff6b6b;
+      }
+      .label-L {
+        color: #2ecc71;
+      }
+      .footer {
+        color: #aab2bd;
+        font-size: 0.9rem;
+      }
+      .table td,
+      .table th {
+        border-color: #232a36 !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container py-4">
+      <div class="d-flex align-items-center mb-4">
+        <i class="fa fa-bolt icon-big mr-3"></i>
+        <h3 class="m-0 title">Clasificador de Movimiento – Realtime</h3>
+      </div>
+
+      <div class="row">
+        <div class="col-lg-5 mb-3">
+          <div class="card p-3">
+            <div class="d-flex align-items-center justify-content-between">
+              <div>
+                <div class="text-muted">Estado actual</div>
+                <div id="pred_label" class="h2 mb-1 label-L">Lento</div>
+                <div class="text-muted">
+                  <i class="fa fa-clock-o"></i> <span id="updated_at">—</span>
+                </div>
+              </div>
+              <div class="text-right">
+                <div class="mb-2">
+                  <span class="badge badge-pill badge-info badge-lg">
+                    <i class="fa fa-database"></i> n=<span id="n">0</span>
+                  </span>
+                </div>
+                <div>
+                  <span class="badge badge-pill badge-secondary badge-lg">
+                    <i class="fa fa-random"></i> Prob. rápido:
+                    <span class="value" id="prob">0.000</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+            <hr />
+            <div class="small footer">
+              <i class="fa fa-info-circle"></i>
+              Ventana {{win}}s • Paso {{step}}s • UDP {{udp_host}}:{{udp_port}}
+              • Modelo: {{model_path}}
+            </div>
+          </div>
+        </div>
+
+        <div class="col-lg-7 mb-3">
+          <div class="card p-3">
+            <div class="d-flex align-items-center mb-2">
+              <i class="fa fa-sliders icon-big mr-3"></i>
+              <h5 class="m-0">Características (F1–F5)</h5>
+            </div>
+            <table class="table table-sm table-dark">
+              <thead>
+                <tr>
+                  <th>Feature</th>
+                  <th>Valor</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>F1 = mean(Ax)</td>
+                  <td class="value" id="f1">—</td>
+                </tr>
+                <tr>
+                  <td>F2 = mean(Ay)</td>
+                  <td class="value" id="f2">—</td>
+                </tr>
+                <tr>
+                  <td>F3 = mean(Az)</td>
+                  <td class="value" id="f3">—</td>
+                </tr>
+                <tr>
+                  <td>F4 = mean(std(Ax,Ay,Az))</td>
+                  <td class="value" id="f4">—</td>
+                </tr>
+                <tr>
+                  <td>F5 = mean(|A|)</td>
+                  <td class="value" id="f5">—</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="text-center text-muted mt-3 footer">
+        <i class="fa fa-heart"></i> Realtime dashboard • Refresh {{poll}} ms
+      </div>
+    </div>
+
+    <script>
+      function refresh() {
+        fetch('/api/status')
+          .then(r => r.json())
+          .then(s => {
+            const elLabel = document.getElementById('pred_label');
+            const elProb  = document.getElementById('prob');
+            const elN     = document.getElementById('n');
+            const elTime  = document.getElementById('updated_at');
+            const f1 = document.getElementById('f1');
+            const f2 = document.getElementById('f2');
+            const f3 = document.getElementById('f3');
+            const f4 = document.getElementById('f4');
+            const f5 = document.getElementById('f5');
+
+            elLabel.textContent = s.label || '—';
+            elLabel.classList.remove('label-R','label-L');
+            elLabel.classList.add(s.label === 'R' ? 'label-R' : 'label-L');
+            elProb.textContent = (s.prob_rapido !== null) ? s.prob_rapido.toFixed(3) : '—';
+            elN.textContent = s.n || 0;
+            elTime.textContent = s.updated_at || '—';
+            const F = s.F || [null,null,null,null,null];
+            f1.textContent = F[0] !== null ? F[0].toFixed(3) : '—';
+            f2.textContent = F[1] !== null ? F[1].toFixed(3) : '—';
+            f3.textContent = F[2] !== null ? F[2].toFixed(3) : '—';
+            f4.textContent = F[3] !== null ? F[3].toFixed(3) : '—';
+            f5.textContent = F[4] !== null ? F[4].toFixed(3) : '—';
+          })
+          .catch(() => {});
+      }
+      setInterval(refresh, {{poll}});
+      refresh();
+    </script>
+  </body>
+</html>
