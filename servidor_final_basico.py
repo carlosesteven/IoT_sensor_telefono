@@ -15,7 +15,7 @@ UDP_HOST = "0.0.0.0"   # escucha en todas las interfaces
 UDP_PORT = 8080        # puerto donde Serial Sensor envía
 WINDOW_SEC = 1.0       # duración de ventana en segundos
 STEP_SEC = 0.5         # cada cuánto predecir
-MODEL_PATH = "IA_Movimientos.joblib"  # ruta fija a tu modelo
+MODEL_PATH = "entrenamiento/IA_Movimientos.joblib"  # ruta fija a tu modelo
 
 # ==================== FEATURES ====================
 def ingenieriaCaracteristicas(df: pd.DataFrame):
