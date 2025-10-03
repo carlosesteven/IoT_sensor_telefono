@@ -5,8 +5,8 @@ provenientes de Serial Sensor (o fuentes compatibles) vía UDP, extraer caracter
 clasificar el movimiento como **Rápido (R)** o **Lento (L)** con un modelo entrenado
 previamente.
 
-* `servidor_basico.py`: versión de consola que imprime las predicciones en tiempo real.
-* `servidor_web.py`: variante con tablero web (Flask) que expone el estado mediante una API
+- `servidor_basico.py`: versión de consola que imprime las predicciones en tiempo real.
+- `servidor_web.py`: variante con tablero web (Flask) que expone el estado mediante una API
   y una interfaz HTML.
 
 ## Requisitos previos
@@ -103,6 +103,28 @@ Para mantener el servidor web activo después de cerrar la terminal puedes usar 
   ```bash
   nohup python servidor_web.py > servidor_web.log 2>&1 &
   ```
+
+#### Supervisar y detener el proceso
+
+Tras lanzar el servidor con `nohup`, puedes verificar si sigue activo consultando la
+tabla de procesos:
+
+```bash
+pgrep -fl servidor_web.py
+```
+
+Cuando desees finalizarlo, envía la señal `TERM` al PID obtenido (sustituye `<PID>` por
+el identificador concreto):
+
+```bash
+kill <PID>
+```
+
+Si prefieres terminar todas las instancias en un solo paso, puedes usar `pkill`:
+
+```bash
+pkill -f servidor_web.py
+```
 
 ## Formatos de mensaje admitidos
 
