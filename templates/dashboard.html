@@ -332,53 +332,60 @@
       var lastTs = null;
 
       function paintLabel(lbl){
-        var pill = document.getElementById('status_pill');
-        pill.classList.remove('status-L','status-R');
-        pill.classList.add(lbl === 'R' ? 'status-R' : 'status-L');
-        document.getElementById('pred_label').textContent = lbl || '—';
-        document.getElementById('kpi_label').textContent  = lbl || '—';
+          var pill = document.getElementById('status_pill');
+          pill.classList.remove('status-L','status-R');
+          pill.classList.add(lbl === 'R' ? 'status-R' : 'status-L');
+
+          // Traducción de sigla a texto completo
+          var texto = '—';
+          if (lbl === 'R') texto = 'Rápido';
+          else if (lbl === 'L') texto = 'Lento';
+
+          document.getElementById('pred_label').textContent = texto;
+          document.getElementById('kpi_label').textContent  = texto;
       }
+
       function paintProb(p){
-        p = Number(p||0);
-        var pct = Math.max(0, Math.min(100, Math.round(p*100)));
-        document.getElementById('prob_text').textContent = p.toFixed(3);
-        document.getElementById('kpi_prob').textContent  = p.toFixed(3);
-        document.getElementById('prob_bar').style.width  = pct + '%';
-        document.getElementById('prob_bar2').style.width = pct + '%';
-        document.getElementById('prob_bar').setAttribute('aria-valuenow', pct);
-        document.getElementById('prob_bar2').setAttribute('aria-valuenow', pct);
+          p = Number(p||0);
+          var pct = Math.max(0, Math.min(100, Math.round(p*100)));
+          document.getElementById('prob_text').textContent = p.toFixed(3);
+          document.getElementById('kpi_prob').textContent  = p.toFixed(3);
+          document.getElementById('prob_bar').style.width  = pct + '%';
+          document.getElementById('prob_bar2').style.width = pct + '%';
+          document.getElementById('prob_bar').setAttribute('aria-valuenow', pct);
+          document.getElementById('prob_bar2').setAttribute('aria-valuenow', pct);
       }
       function paintFeatures(F){
-        var ids=['f1','f2','f3','f4','f5'];
-        for (var i=0;i<5;i++){
+          var ids=['f1','f2','f3','f4','f5'];
+          for (var i=0;i<5;i++){
           var el=document.getElementById(ids[i]);
           var v=(F && F[i]!==null) ? Number(F[i]).toFixed(3) : '—';
           el.textContent=v;
-        }
+          }
       }
       function paintMeta(n, ts){
-        document.getElementById('kpi_n').textContent   = n || 0;
-        document.getElementById('kpi_time').textContent= ts || '—';
-        lastTs = ts;
+          document.getElementById('kpi_n').textContent   = n || 0;
+          document.getElementById('kpi_time').textContent= ts || '—';
+          lastTs = ts;
       }
       function checkStale(){
-        if(!lastTs) return;
-        var now = Date.now();
-        var t = new Date(lastTs.replace(' ','T')).getTime();
-        var stale = (now - t) > 2500;
-        document.getElementById('stale').style.display = stale ? 'block' : 'none';
-        document.getElementById('live_dot').style.opacity = stale ? .3 : 1;
+          if(!lastTs) return;
+          var now = Date.now();
+          var t = new Date(lastTs.replace(' ','T')).getTime();
+          var stale = (now - t) > 2500;
+          document.getElementById('stale').style.display = stale ? 'block' : 'none';
+          document.getElementById('live_dot').style.opacity = stale ? .3 : 1;
       }
 
       function refresh(){
-        fetch('/api/status')
+          fetch('/api/status')
           .then(r=>r.json())
           .then(s=>{
-            paintLabel(s.label || '—');
-            paintProb(s.prob_rapido || 0);
-            paintFeatures(s.F || [null,null,null,null,null]);
-            paintMeta(s.n, s.updated_at);
-            checkStale();
+              paintLabel(s.label || '—');
+              paintProb(s.prob_rapido || 0);
+              paintFeatures(s.F || [null,null,null,null,null]);
+              paintMeta(s.n, s.updated_at);
+              checkStale();
           })
           .catch(()=>{});
       }
